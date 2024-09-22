@@ -197,8 +197,6 @@ def create_features(data: pd.DataFrame, config: dict) -> pd.DataFrame:
 
 
 
-
-
 def train_model(data: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, object]:
 
     try:
@@ -600,6 +598,27 @@ def process_current_data(current_data_with_feature: pd.DataFrame, config: dict) 
         raise
 
 
+def automated_retraining(rmse: float, threshold: float = 0.1) -> bool:
+    """
+    Trigger automated retraining if RMSE exceeds a predefined threshold.
+    """
+    try:
+        # 1. Check if the RMSE exceeds the threshold
+        if rmse > threshold:
+            # 2. Log that retraining is needed
+            logger.info(f"RMSE of {rmse:.4f} exceeded threshold of {threshold:.4f}. Triggering retraining...")
+            return True
+        else:
+            # 3. Log that no retraining is needed
+            logger.info(f"RMSE of {rmse:.4f} is within acceptable limits. No retraining needed.")
+            return False
+
+    except Exception as e:
+        # 4. Log and raise any unexpected errors
+        logger.error(f"Automated retraining check encountered an error: {e}")
+        raise
+
+
 def run_pipeline(config):
     # 1. Fetch Data
     data = fetch_eurusd_data(config)
@@ -641,15 +660,12 @@ def run_pipeline(config):
     print(current_data_predict_shifted_close)
 
  
-   # print(current_data)
-
-    # # 6. Drift Detection
-    #detect_drift(data, config)
+    # 11. Drift Detection
     suite.model_performance_and_Target_drift_analysis(current_data_predict_shifted_close,data_with_prediction_shifted_close)
 
     
-    # # 7. Deploy Model
-    # deploy_model(data, config)
+    # 7. Deploy Model
+    automated_retraining(data, config)
 
 # Main function to run everything
 if __name__ == "__main__":
