@@ -413,7 +413,7 @@ def model_validation(data: pd.DataFrame, model: ElasticNet, config: dict) -> dic
 
 
 
-def model_deployment(model) -> str:
+def model_deployment(model, config) -> str:
     try:
         # Set BENTOML_HOME to the current directory
         os.environ["BENTOML_HOME"] = os.getcwd()
@@ -428,13 +428,105 @@ def model_deployment(model) -> str:
         logger.info(f"ElasticNet model deployed successfully with BentoML. Model tag: {model_tag}")
 
         # Print the save location for debugging
-        save_location = bentoml.models.get("elasticnet_model").path
-        logger.info(f"Model saved at: {save_location}")
+        # save_location = bentoml.models.get("elasticnet_model").path
+        # logger.info(f"Model saved at: {save_location}")
 
         return model_tag
 
     except Exception as e:
         logger.error(f"Model deployment failed: {e}")
+        raise
+
+
+
+def prediction_service(model_tag: str, engineered_data: pd.DataFrame, config: dict) -> pd.Series:
+  
+    try:
+        # Load the best model from the BentoML model store using the model tag
+        model_runner = bentoml.sklearn.get(model_tag).to_runner()
+        model_runner.init_local()  # For debugging and local testing only
+
+        # Load required columns from the config
+        required_columns = config['prediction']['required_columns']
+
+        # Forward-fill missing values in required columns
+        engineered_data[required_columns] = engineered_data[required_columns].ffill()
+        # backward-fill missing values in required columns
+        engineered_data[required_columns] = engineered_data[required_columns].bfill()
+
+        # If there are still NaNs, fill them with 0 as a last resort
+        engineered_data[required_columns] = engineered_data[required_columns].fillna(0)
+
+        # Extract the most recent row of features for prediction
+        last_row_features = engineered_data[required_columns].iloc[-1].values.reshape(1, -1)
+
+        # Make the prediction using the trained and deployed model
+        predicted_value = model_runner.predict.run(last_row_features)
+
+        # Log the prediction success
+        logger.info(f"Prediction completed successfully. Predicted value: {predicted_value}")
+
+        # Handle timestamp for the next prediction
+        last_timestamp = engineered_data.index[-1]
+        if isinstance(last_timestamp, pd.Timestamp):
+            # Assuming daily frequency for time series, increment the timestamp by 1 day
+            next_timestamp = last_timestamp + pd.DateOffset(days=1)
+        else:
+            # For non-Timestamp indices, increment by 1
+            next_timestamp = last_timestamp + 1
+
+        # Add the predicted value to the 'predicted' column for the next timestamp
+        engineered_data['predicted'] = np.nan  # Initialize the 'predicted' column with NaNs
+        engineered_data.at[next_timestamp, 'predicted'] = predicted_value[0]  # Add the prediction
+
+        return engineered_data['predicted']
+
+    except Exception as e:
+        logger.error(f"Prediction service failed: {e}")
+        raise
+
+
+
+def post_processing(data: pd.DataFrame, config: dict) -> pd.DataFrame:
+
+    try:
+        # 1. Ensure both 'predicted' and 'close' columns are present
+        if 'predicted' not in data.columns or 'close' not in data.columns:
+            logger.error("Post-processing failed due to missing 'predicted' or 'close' columns")
+            raise KeyError("Required columns 'predicted' or 'close' are missing for post-processing")
+
+        # 2. Define a tolerance for deciding to hold from the config file
+        tolerance = config['post_processing'].get('tolerance', 0.001)  # Default to 0.001 if not specified
+
+
+        # 3. Handle missing values using backward fill and forward fill
+        data['predicted'].fillna(method='bfill', inplace=True)
+        data['predicted'].fillna(method='ffill', inplace=True)
+        data['close'].fillna(method='bfill', inplace=True)
+        data['close'].fillna(method='ffill', inplace=True)
+
+        # 3. Initialize a 'decision' column with 'hold' as the default
+        data['decision'] = 'hold'
+
+        # 4. Buy if the predicted price is higher than the actual price by more than the tolerance
+        data.loc[data['predicted'] > data['close'] + tolerance, 'decision'] = 'buy'
+
+        # 5. Sell if the predicted price is lower than the actual price by more than the tolerance
+        data.loc[data['predicted'] < data['close'] - tolerance, 'decision'] = 'sell'
+
+        # 6. Log the completion of post-processing
+        logger.info("Post-processing completed. Decisions made based on predicted vs actual prices.")
+
+        # 7. Return the DataFrame with the new 'decision' column
+        return data[['close', 'predicted', 'decision']]
+
+    except KeyError as e:
+        # 8. Log and raise KeyError if required columns are missing
+        logger.error(f"Post-processing failed due to missing column(s): {e}")
+        raise KeyError("Required columns are missing for post-processing") from e
+    except Exception as e:
+        # 9. Log and raise any unexpected errors
+        logger.error(f"Post-processing encountered an unexpected error: {e}")
         raise
 
 
@@ -447,19 +539,27 @@ def run_pipeline(config):
     #print(data)
     
     # 3. Feature Engineering
-    data = create_features(data, config)
+    training_data_with_features = create_features(data, config)
+    print(training_data_with_features)
+
     
     # 4. Train Model
-    data, model = train_model(data, config)
-
+    data_with_prediction, model = train_model(training_data_with_features, config)
+    
     # 5. Evaluate Model
-    evaluation_results = evaluate_model(data, config)
+    evaluation_results = evaluate_model(data_with_prediction, config)
 
     # 6. Model Validation
-    model_validation(data, model, config)
+    model_validation(data_with_prediction, model, config)
 
     # 7. Deploy Model
-    model_deployment(model)
+    model_tag=model_deployment(model, config)
+
+    # 8. Prediction Service
+    prediction_service(model_tag, data, config)
+
+    # 9. post processing    
+    post_processed_data = post_processing(training_data_with_features, config)
 
     
     # # 6. Drift Detection

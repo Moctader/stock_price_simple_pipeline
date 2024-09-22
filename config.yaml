@@ -1,7 +1,7 @@
 data_ingestion:
   source: "EURUSD"   # The currency pair (or source name)
   start_date: "2023-01-01"
-  end_date: "2023-01-10"
+  end_date: "2024-05-07"
   api_url: "https://eodhd.com/api/intraday/EURUSD.FOREX"
   api_token: "658e841fa1a6f9.30546411"
 
@@ -27,6 +27,7 @@ model:
 #   param_grid:
 #     n_estimators: [100, 200, 300]
 #     max_depth: [5, 10, 15]
+
 evaluation:
   metrics: 
     - mse
@@ -46,6 +47,19 @@ validation:
 
 deployment:
   save_model: false     # Whether to save the model for future use
+
+prediction:
+  required_columns:
+    - "open"
+    - "high"
+    - "low"
+    - "close"
+    - "MA3"
+
+
+post_processing:
+  tolerance: 0.001  # Specify your tolerance value here
+
 
 drift_detection:
   enabled: true
