@@ -80,7 +80,6 @@ def fetch_eurusd_data(config):
     api_url = f"{api_base_url}?api_token={config['data_ingestion']['api_token']}&fmt=json&from={int(start_date)}&to={int(end_date)}"
 
     try:
-        print(api_url)
         # Try to fetch real data using the data_ingestion function
         data = data_ingestion(api_url)
 
