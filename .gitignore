@@ -1,3 +1,6 @@
 evn/
+envs/
 /Users/moctader/TrustworthyAI/stock_pipeline/evn
 __pycache__
+bentos
+models/

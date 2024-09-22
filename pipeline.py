@@ -4,6 +4,17 @@ import yaml
 import os
 import requests
 import logging
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import ElasticNet
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+import numpy as np
+import pandas as pd
+import joblib
+import bentoml
+
+
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -197,6 +208,236 @@ def create_features(data: pd.DataFrame, config: dict) -> pd.DataFrame:
 
 
 
+
+
+def train_model(data: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, object]:
+
+    try:
+        # Ensure required columns are present for training
+        required_columns = ['open', 'high', 'low', 'close', 'MA3']
+        missing_columns = [col for col in required_columns if col not in data.columns]
+
+        if missing_columns:
+            logger.error(f"Model training failed due to missing columns: {missing_columns}")
+            raise KeyError(f"Missing columns: {missing_columns}")
+
+        # Prepare features (X) and target (y)
+        X = data[required_columns].copy()
+        X.ffill(inplace=True)
+        X.fillna(0, inplace=True)  # Ensure no NaNs remain
+        y = data['close'].shift(-1).values  # Predict the next time step's 'close' value
+
+        # Remove last row due to shift creating NaN
+        X = X[:-1]
+        y = y[:-1]
+
+        if np.isnan(y).any():
+            logger.error("Target variable 'y' contains NaN values after shifting.")
+            raise ValueError("Target variable 'y' contains NaN values.")
+
+        # Time-based train-test split
+        split_index = int(len(X) * 0.8)
+        X_train, X_test = X[:split_index], X[split_index:]
+        y_train, y_test = y[:split_index], y[split_index:]
+
+        # Get the model type and hyperparameters from the config
+        model_type = config['model']['type']
+        param_grid = config['model']['param_grid']
+        model_name = config['model']['name']  # Name to save the model
+
+        if model_type == 'ElasticNet':
+            model = ElasticNet(max_iter=10000)
+        elif model_type == 'RandomForest':
+            model = RandomForestRegressor()
+        else:
+            logger.error(f"Unknown model type '{model_type}' specified in config.")
+            raise ValueError(f"Unknown model type: {model_type}")
+
+        # Perform GridSearchCV for hyperparameter tuning
+        grid_search = GridSearchCV(model, param_grid, scoring='neg_mean_squared_error', cv=5, n_jobs=-1)
+        grid_search.fit(X_train, y_train)
+
+        # Get the best model from GridSearchCV
+        best_model = grid_search.best_estimator_
+
+        # Make predictions
+        y_train_pred = best_model.predict(X_train)
+        y_test_pred = best_model.predict(X_test)
+
+        # Evaluate the model
+        mse_train = mean_squared_error(y_train, y_train_pred)
+        mse_test = mean_squared_error(y_test, y_test_pred)
+        r2_train = r2_score(y_train, y_train_pred)
+        r2_test = r2_score(y_test, y_test_pred)
+
+        # Log model performance
+        logger.info(f"Model training completed. Train MSE: {mse_train:.4f}, Test MSE: {mse_test:.4f}")
+        logger.info(f"Model training completed. Train R²: {r2_train:.4f}, Test R²: {r2_test:.4f}")
+
+        # Add predictions to the original DataFrame
+        data['predicted'] = np.nan
+        data.loc[data.index[:-1], 'predicted'] = best_model.predict(X)
+
+        # Save the trained model
+        model_file_path = f"{model_name}.joblib"
+        joblib.dump(best_model, model_file_path)
+        logger.info(f"Model saved as {model_file_path}")
+
+        # Return updated data and the best model
+        return data, best_model
+
+    except KeyError as e:
+        logger.error(f"Model training failed due to missing column(s): {e}")
+        raise KeyError("Required columns are missing for model training") from e
+    except ValueError as e:
+        logger.error(f"Model training encountered a data error: {e}")
+        raise ValueError("Data error during model training") from e
+    except Exception as e:
+        logger.error(f"Model training encountered an unexpected error: {e}")
+        raise
+
+
+def evaluate_model(data: pd.DataFrame, config: dict) -> dict:
+
+    try:
+        # Ensure the 'predicted' and 'close' columns are present
+
+        if 'predicted' not in data.columns or 'close' not in data.columns:
+            logger.error("Model evaluation failed due to missing 'predicted' or 'close' columns")
+            raise KeyError("Required columns 'predicted' or 'close' are missing for evaluation")
+
+        # Ensure there is enough data for evaluation (at least 1 row of predictions)
+        if data['predicted'].isnull().all():
+            logger.error("Model evaluation failed: No predictions available for evaluation")
+            raise ValueError("No predictions available for evaluation")
+
+        # Align predicted and actual values by ensuring non-NaN values are used
+        predicted = data['predicted'].dropna().values
+        actual = data['close'].shift(-1).dropna().values  # Compare with shifted actuals
+
+        # Ensure the length of predicted and actual values match
+        if len(predicted) != len(actual):
+            logger.error("Model evaluation failed: Mismatch between predicted and actual lengths")
+            raise ValueError("Mismatch between predicted and actual lengths for evaluation")
+
+        # Initialize an empty dictionary to store the evaluation results
+        evaluation_results = {}
+
+        # Get the list of metrics to calculate from the config
+        metrics_to_calculate = config.get('evaluation', {}).get('metrics', ['mse', 'r2', 'mae'])
+
+        # Compute metrics based on the config
+        if 'mse' in metrics_to_calculate:
+            mse = mean_squared_error(actual, predicted)
+            evaluation_results['mse'] = mse
+            logger.info(f"Mean Squared Error (MSE): {mse:.4f}")
+        
+        if 'r2' in metrics_to_calculate:
+            r2 = r2_score(actual, predicted)
+            evaluation_results['r2'] = r2
+            logger.info(f"R-squared (R²): {r2:.4f}")
+        
+        if 'mae' in metrics_to_calculate:
+            mae = mean_absolute_error(actual, predicted)
+            evaluation_results['mae'] = mae
+            logger.info(f"Mean Absolute Error (MAE): {mae:.4f}")
+
+        # Add more metrics as needed based on config
+        # Example: if 'rmse' in metrics_to_calculate:
+        #   rmse = np.sqrt(mse)
+        #   evaluation_results['rmse'] = rmse
+        #   logger.info(f"Root Mean Squared Error (RMSE): {rmse:.4f}")
+
+        # Return the dictionary with all the computed metrics
+        logger.info("Model evaluation completed successfully with selected metrics.")
+        return evaluation_results
+
+    except KeyError as e:
+        logger.error(f"Model evaluation failed due to missing column(s): {e}")
+        raise KeyError("Required columns are missing for model evaluation") from e
+    except ValueError as e:
+        logger.error(f"Model evaluation failed due to data inconsistency: {e}")
+        raise ValueError(f"Data inconsistency during model evaluation: {e}") from e
+    except Exception as e:
+        logger.error(f"Model evaluation encountered an unexpected error: {e}")
+        raise
+
+
+
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+import pandas as pd
+
+def model_validation(data: pd.DataFrame, model: ElasticNet, config: dict) -> dict:
+   
+    try:
+        # Get required columns and validation split from config
+        required_columns = config['validation']['features']
+        validation_split_ratio = config['validation']['split_ratio']
+
+        # Prepare the features (X) and target (y) for validation
+        X = data[required_columns].fillna(0).values
+        y = data['close'].shift(-1).values  # Shift 'close' to predict x(t+1) at time step t
+
+        # Remove the last row from X and y, as y[-1] will be NaN after shifting
+        X = X[:-1]
+        y = y[:-1]
+
+        # Time-based train-validation split
+        split_index = int(len(X) * (1 - validation_split_ratio))
+        X_train, X_val = X[:split_index], X[split_index:]
+        y_train, y_val = y[:split_index], y[split_index:]
+
+        # ElasticNet model already trained, use it for prediction on the validation set
+        y_pred_val = model.predict(X_val)
+
+        # Calculate evaluation metrics: MSE, R², MAE for validation
+        mse_val = mean_squared_error(y_val, y_pred_val)
+        r2_val = r2_score(y_val, y_pred_val)
+        mae_val = mean_absolute_error(y_val, y_pred_val)
+
+        # Log the validation metrics
+        logger.info(f"Model validation completed. Validation MSE: {mse_val:.4f}, R²: {r2_val:.4f}, MAE: {mae_val:.4f}")
+
+        # Return all metrics in a dictionary
+        return {"mse": mse_val, "r2": r2_val, "mae": mae_val}
+
+    except KeyError as e:
+        logger.error(f"Model validation failed due to missing column(s): {e}")
+        raise KeyError("Required columns are missing for model validation") from e
+    except ValueError as e:
+        logger.error(f"Model validation failed due to data error: {e}")
+        raise ValueError("Data error during model validation") from e
+    except Exception as e:
+        logger.error(f"Model validation encountered an unexpected error: {e}")
+        raise
+
+
+
+def model_deployment(model) -> str:
+    try:
+        # Set BENTOML_HOME to the current directory
+        os.environ["BENTOML_HOME"] = os.getcwd()
+        bentoml_home = os.environ["BENTOML_HOME"]
+        logger.info(f"BENTOML_HOME set to: {bentoml_home}")
+
+        # Save the ElasticNet model using BentoML
+        bento_svc = bentoml.sklearn.save_model("elasticnet_model", model)
+        model_tag = str(bento_svc.tag)
+
+        # Log the deployment success
+        logger.info(f"ElasticNet model deployed successfully with BentoML. Model tag: {model_tag}")
+
+        # Print the save location for debugging
+        save_location = bentoml.models.get("elasticnet_model").path
+        logger.info(f"Model saved at: {save_location}")
+
+        return model_tag
+
+    except Exception as e:
+        logger.error(f"Model deployment failed: {e}")
+        raise
+
+
 def run_pipeline(config):
     # 1. Fetch Data
     data = fetch_eurusd_data(config)
@@ -208,11 +449,18 @@ def run_pipeline(config):
     # 3. Feature Engineering
     data = create_features(data, config)
     
-    # # 4. Train Model
-    # data = train_model(data, config)
-    
-    # # 5. Evaluate Model
-    # data = evaluate_model(data, config)
+    # 4. Train Model
+    data, model = train_model(data, config)
+
+    # 5. Evaluate Model
+    evaluation_results = evaluate_model(data, config)
+
+    # 6. Model Validation
+    model_validation(data, model, config)
+
+    # 7. Deploy Model
+    model_deployment(model)
+
     
     # # 6. Drift Detection
     # detect_drift(data, config)

@@ -15,11 +15,34 @@ feature_engineering:
   target_column: "close"    # The column on which the moving average is applied
 
 model:
-  type: "last_known_value"  # The model to use: in this case, it uses last known value for prediction
-  drift_threshold: 0.01    # Threshold for drift detection
+  type: 'ElasticNet'  # or 'RandomForest'
+  param_grid:
+    alpha: [0.1, 1.0, 10.0]
+    l1_ratio: [0.1, 0.5, 0.9]
+  name: 'elastic_net_model'  # Name to save the model
 
+# Alternatively for RandomForest:
+# model:
+#   type: "RandomForest"
+#   param_grid:
+#     n_estimators: [100, 200, 300]
+#     max_depth: [5, 10, 15]
 evaluation:
-  metrics: ["error"]   # Which metrics to evaluate
+  metrics: 
+    - mse
+    - r2
+    - mae
+
+
+validation:
+  features:
+    - 'open'
+    - 'high'
+    - 'low'
+    - 'close'
+    - 'MA3'
+  split_ratio: 0.2
+
 
 deployment:
   save_model: false     # Whether to save the model for future use
