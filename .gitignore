@@ -4,3 +4,4 @@ envs/
 __pycache__
 bentos
 models/
+/elastic_net_model.joblib/

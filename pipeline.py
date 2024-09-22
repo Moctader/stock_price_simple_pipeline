@@ -45,6 +45,7 @@ def data_ingestion(api_url: str) -> pd.DataFrame:
         # Try converting the response to JSON, handle case where it's not valid JSON
         try:
             data = pd.DataFrame(response.json())
+            print(data)
         except ValueError as e:
             logger.error("Failed to parse JSON from API response")
             raise ValueError("Invalid JSON response from the API") from e
@@ -78,6 +79,7 @@ def fetch_eurusd_data(config):
     api_url = f"{api_base_url}?api_token={config['data_ingestion']['api_token']}&fmt=json&from={int(start_date)}&to={int(end_date)}"
 
     try:
+        print(api_url)
         # Try to fetch real data using the data_ingestion function
         data = data_ingestion(api_url)
 
@@ -90,15 +92,11 @@ def fetch_eurusd_data(config):
     return data
 
 
-
-
 def data_preprocessing(data: pd.DataFrame, config: dict) -> pd.DataFrame:
- 
     try:
         # Fetch the required settings from the config
         datetime_column = config['preprocessing']['datetime_column']
         required_columns = config['preprocessing']['required_columns']
-        nan_handling_method = config['preprocessing']['nan_handling']  # 'ffill' or 'bfill'
 
         # Ensure essential columns are present (as defined in the config)
         missing_columns = [col for col in required_columns if col not in data.columns]
@@ -117,16 +115,9 @@ def data_preprocessing(data: pd.DataFrame, config: dict) -> pd.DataFrame:
         # Set datetime column as the DataFrame index
         data.set_index(datetime_column, inplace=True)
 
-        # Handle missing values based on the config
-        if nan_handling_method == 'ffill':
-            logger.info("Applying forward fill for missing values")
-            data.ffill(inplace=True)
-        elif nan_handling_method == 'bfill':
-            logger.info("Applying backward fill for missing values")
-            data.bfill(inplace=True)
-        else:
-            logger.error(f"Unknown NaN handling method: {nan_handling_method}")
-            raise ValueError(f"Unknown NaN handling method: {nan_handling_method}")
+        # Handle missing values by filling with the median value for each column
+        logger.info("Filling missing values with the median value for each column")
+        data.fillna(data.median(), inplace=True)
 
         # Corner case: Ensure no NaNs remain in the essential columns after filling
         remaining_nans = data[required_columns].isnull().sum().sum()
@@ -144,8 +135,6 @@ def data_preprocessing(data: pd.DataFrame, config: dict) -> pd.DataFrame:
     except Exception as e:
         logger.error(f"Data preprocessing encountered an unexpected error: {e}")
         raise
-
-
 
 
 def create_features(data: pd.DataFrame, config: dict) -> pd.DataFrame:
@@ -221,11 +210,14 @@ def train_model(data: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, object]
             logger.error(f"Model training failed due to missing columns: {missing_columns}")
             raise KeyError(f"Missing columns: {missing_columns}")
 
+        # Shift 'close' values to create the target variable and store as 'shifted_close'
+        data['shifted_close'] = data['close'].shift(-1)
+
         # Prepare features (X) and target (y)
         X = data[required_columns].copy()
         X.ffill(inplace=True)
         X.fillna(0, inplace=True)  # Ensure no NaNs remain
-        y = data['close'].shift(-1).values  # Predict the next time step's 'close' value
+        y = data['shifted_close'].values  # Predict the next time step's 'close' value
 
         # Remove last row due to shift creating NaN
         X = X[:-1]
@@ -287,15 +279,14 @@ def train_model(data: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, object]
         return data, best_model
 
     except KeyError as e:
-        logger.error(f"Model training failed due to missing column(s): {e}")
-        raise KeyError("Required columns are missing for model training") from e
+        logger.error(f"Model training failed due to missing columns: {e}")
+        raise KeyError(f"Required columns are missing from the data") from e
     except ValueError as e:
-        logger.error(f"Model training encountered a data error: {e}")
-        raise ValueError("Data error during model training") from e
+        logger.error(f"Model training failed: {e}")
+        raise
     except Exception as e:
         logger.error(f"Model training encountered an unexpected error: {e}")
         raise
-
 
 def evaluate_model(data: pd.DataFrame, config: dict) -> dict:
 
@@ -530,6 +521,85 @@ def post_processing(data: pd.DataFrame, config: dict) -> pd.DataFrame:
         raise
 
 
+
+import bentoml
+import pandas as pd
+import numpy as np
+import logging
+
+# Set up logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+def load_latest_model(model_name: str):
+    try:
+        # Get the latest model from BentoML model store
+        model_info = bentoml.models.get(model_name)
+        model_runner = model_info.to_runner()
+        model_runner.init_local()  # Initialize the model runner for local predictions
+        logger.info(f"Loaded latest model: {model_info.tag}")
+        return model_runner
+    except Exception as e:
+        logger.error(f"Failed to load the latest model: {e}")
+        raise
+
+def prepare_data_for_prediction(data: pd.DataFrame, config: dict) -> pd.DataFrame:
+    # Preprocess the data and create features
+    data = data_preprocessing(data, config)
+    data = create_features(data, config)
+    return data
+
+def make_predictions(model_runner, data: pd.DataFrame, config: dict) -> pd.DataFrame:
+    try:
+        # Load required columns from the config
+        required_columns = config['prediction']['required_columns']
+
+        # Forward-fill missing values in required columns
+        data[required_columns] = data[required_columns].ffill()
+        # Backward-fill missing values in required columns
+        data[required_columns] = data[required_columns].bfill()
+
+        # If there are still NaNs, fill them with 0 as a last resort
+        data[required_columns] = data[required_columns].fillna(0)
+
+        # Extract the features for prediction
+        features = data[required_columns].values
+
+        # Make predictions using the trained and deployed model
+        predictions = model_runner.run(features)
+
+        # Store the predictions in the DataFrame
+        data['predicted'] = predictions
+
+        logger.info("Predictions completed successfully.")
+        return data
+
+    except Exception as e:
+        logger.error(f"Prediction failed: {e}")
+        raise
+
+def process_current_data(current_data_with_feature: pd.DataFrame, config: dict) -> pd.DataFrame:
+    try:
+        # Load the latest model
+        model_runner = load_latest_model("elasticnet_model")
+
+        # Prepare the data for prediction
+        prepared_data = prepare_data_for_prediction(current_data_with_feature, config)
+
+        # Shift 'close' values to create the target variable and store as 'shifted_close'
+        prepared_data['shifted_close'] = prepared_data['close'].shift(-1)
+
+        # Make predictions and store them in the DataFrame
+        data_with_predictions = make_predictions(model_runner, prepared_data, config)
+
+        # Return the DataFrame with shifted_close and predictions
+        return data_with_predictions
+
+    except Exception as e:
+        logger.error(f"Processing current data failed: {e}")
+        raise
+
+
 def run_pipeline(config):
     # 1. Fetch Data
     data = fetch_eurusd_data(config)
@@ -540,17 +610,19 @@ def run_pipeline(config):
     
     # 3. Feature Engineering
     training_data_with_features = create_features(data, config)
-    print(training_data_with_features)
+    # print(training_data_with_features)
 
     
     # 4. Train Model
-    data_with_prediction, model = train_model(training_data_with_features, config)
+    data_with_prediction_shifted_close, model = train_model(training_data_with_features, config)
+    print(data_with_prediction_shifted_close)
+
     
     # 5. Evaluate Model
-    evaluation_results = evaluate_model(data_with_prediction, config)
+    evaluation_results = evaluate_model(data_with_prediction_shifted_close, config)
 
     # 6. Model Validation
-    model_validation(data_with_prediction, model, config)
+    model_validation(data_with_prediction_shifted_close, model, config)
 
     # 7. Deploy Model
     model_tag=model_deployment(model, config)
@@ -562,8 +634,18 @@ def run_pipeline(config):
     post_processed_data = post_processing(training_data_with_features, config)
 
     
+    # 10. preparing current data
+    current_data=pd.read_csv('current.csv')
+    # current_data = data_preprocessing(current_data, config)
+    # current_data_with_feature = create_features(current_data, config)
+    current_data_predict_shifted_close = process_current_data(current_data, config)
+    print(current_data_predict_shifted_close)
+
+ 
+   # print(current_data)
+
     # # 6. Drift Detection
-    # detect_drift(data, config)
+    #detect_drift(data, config)
     
     # # 7. Deploy Model
     # deploy_model(data, config)
