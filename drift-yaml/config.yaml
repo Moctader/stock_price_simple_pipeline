@@ -1,0 +1,102 @@
+models:
+  - name: model_lstm_v1
+    type: regression
+    input:
+      current_data: path/to/current_dataA.csv
+      reference_data: src/data/reference/reference_data.parquet
+    output:
+      predictions: 
+    performance_thresholds:
+      # Model performance thresholds
+      rmse: 0.02  
+      mean_abs_error: 0.02
+      r2_score: 0.9
+      mean_abs_perc_error: 1.0
+      abs_error_max: 0.05
+      error_std: 0.03
+      abs_error_std: 0.03
+      abs_perc_error_std: 0.02
+    drift_thresholds:
+      # Target drift thresholds
+      drift_score: 0.29
+      drift_detected: true
+
+
+
+  - name: ModelB
+    type: classification
+    parameters:
+      param1: value1
+      param2: value2
+    training_data:
+      path: path/to/training_dataB.json
+      format: json
+    current_data:
+      path: path/to/current_dataB.json
+      format: json
+    reference_data:
+      path: path/to/reference_dataB.json
+      format: json
+    performance_metrics:
+      accuracy:
+        threshold: 0.8
+      precision:
+        threshold: 0.75
+      recall:
+        threshold: 0.7
+
+  - name: ModelC
+    type: time_series
+    parameters:
+      param1: value1
+      param2: value2
+    training_data:
+      path: path/to/training_dataC.csv
+      format: csv
+    current_data:
+      path: path/to/current_dataC.csv
+      format: csv
+    reference_data:
+      path: path/to/reference_dataC.csv
+      format: csv
+    performance_metrics:
+      mean_absolute_error:
+        threshold: 5.0
+      mean_squared_error:
+        threshold: 10.0
+
+  - name: ModelD
+    type: clustering
+    parameters:
+      param1: value1
+      param2: value2
+    training_data:
+      path: path/to/training_dataD.csv
+      format: csv
+    current_data:
+      path: path/to/current_dataD.csv
+      format: csv
+    reference_data:
+      path: path/to/reference_dataD.csv
+      format: csv
+    performance_metrics:
+      silhouette_score:
+        threshold: 0.5
+
+  - name: ModelE
+    type: anomaly_detection
+    parameters:
+      param1: value1
+      param2: value2
+    training_data:
+      path: path/to/training_dataE.csv
+      format: csv
+    current_data:
+      path: path/to/current_dataE.csv
+      format: csv
+    reference_data:
+      path: path/to/reference_dataE.csv
+      format: csv
+    performance_metrics:
+      f1_score:
+        threshold: 0.7

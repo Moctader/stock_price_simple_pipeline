@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import joblib
 import bentoml
+from drift_suite import suite
 
 
 
@@ -615,7 +616,6 @@ def run_pipeline(config):
     
     # 4. Train Model
     data_with_prediction_shifted_close, model = train_model(training_data_with_features, config)
-    print(data_with_prediction_shifted_close)
 
     
     # 5. Evaluate Model
@@ -646,6 +646,8 @@ def run_pipeline(config):
 
     # # 6. Drift Detection
     #detect_drift(data, config)
+    suite.model_performance_and_Target_drift_analysis(current_data_predict_shifted_close,data_with_prediction_shifted_close)
+
     
     # # 7. Deploy Model
     # deploy_model(data, config)
