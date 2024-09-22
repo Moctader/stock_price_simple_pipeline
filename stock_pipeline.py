@@ -567,9 +567,7 @@ def automated_retraining(rmse: float, threshold: float = 0.1) -> bool:
     """
     try:
         # 1. Check if the RMSE exceeds the threshold
-        print("------------------")
-        print(type(rmse))
-        print(type(threshold))  
+      
         if rmse > threshold:
             # 2. Log that retraining is needed
             logger.info(f"RMSE of {rmse:.4f} exceeded threshold of {threshold:.4f}. Triggering retraining...")
@@ -668,16 +666,22 @@ def stock_pipeline():
     # Drift detection should happen on post-processed data to detect drift based on the decisions made
     drift_score = drift_detection(post_processed_data)
 
+    
     # Step 11: Monitoring Profitability
     # Profitability monitoring based on post-processed data including decisions
     profit_data = monitor_profitability(post_processed_data)
     # Step 12: Automated Retraining (optional, based on drift detection)
     profit_data = monitor_profitability(post_processed_data)
 
-    retrain_needed = automated_retraining(drift_score)
+    retrain_needed = automated_retraining(drift_score["rmse"])
 
 # Instantiate and run the pipeline
 stock_pipeline_svc = stock_pipeline()
 
 # Run the pipeline, manage if retraining is triggered
-# stock_pipeline_svc.run(unlisted=True)
+# Ensure stock_pipeline_svc is not None
+if stock_pipeline_svc is not None:
+    # Run the pipeline, manage if retraining is triggered
+    stock_pipeline_svc.run(unlisted=True)
+else:
+    raise ValueError("Failed to create the stock_pipeline. The pipeline object is None.")

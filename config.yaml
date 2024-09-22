@@ -1,0 +1,29 @@
+data_ingestion:
+  source: "EURUSD"   # The currency pair (or source name)
+  start_date: "2023-01-01"
+  end_date: "2023-01-10"
+  api_url: "https://eodhd.com/api/intraday/EURUSD.FOREX"
+  api_token: "658e841fa1a6f9.30546411"
+
+preprocessing:
+  nan_handling: "ffill"  # Options: 'ffill' for forward fill, 'bfill' for backward fill
+  datetime_column: "datetime"  # The name of the datetime column
+  required_columns: ['open', 'high', 'low', 'close']  # List of essential columns
+
+feature_engineering:
+  moving_average_window: 3  # The window size for the moving average
+  target_column: "close"    # The column on which the moving average is applied
+
+model:
+  type: "last_known_value"  # The model to use: in this case, it uses last known value for prediction
+  drift_threshold: 0.01    # Threshold for drift detection
+
+evaluation:
+  metrics: ["error"]   # Which metrics to evaluate
+
+deployment:
+  save_model: false     # Whether to save the model for future use
+
+drift_detection:
+  enabled: true
+  drift_threshold: 0.01  # Threshold for drift detection (e.g., 0.01)
