@@ -626,6 +626,45 @@ def ks_test(reference_data, current_data, target_col):
         'p_value': p_value
     }
 
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import pandas as pd
+from matplotlib.gridspec import GridSpec
+
+# Define colors
+# Define colors
+GREY = '#808080'
+RED = '#FF0000'
+
+def plot_example(ref: pd.Series, curr: pd.Series):
+  fig = plt.figure(constrained_layout=True, figsize=(15,7))
+
+  gs = GridSpec(2, 3, figure=fig)
+  ax1 = fig.add_subplot(gs[0, :])
+  ax2 = fig.add_subplot(gs[1, 0])
+  ax3 = fig.add_subplot(gs[1, 1])
+  ax4 = fig.add_subplot(gs[1, 2])
+
+  # plot feature in time
+  ref_points = int(np.round(150 * len(ref) /(len(ref) + len(curr))))
+  curr_points = 150 - ref_points
+
+  ref_in_time = [np.mean(x) for x in np.array_split(ref, ref_points)]
+  curr_in_time = [np.mean(x) for x in np.array_split(curr, curr_points)]
+
+  ax1.plot(range(ref_points), ref_in_time, color=GREY)
+  ax1.plot(range(ref_points, ref_points + curr_points), curr_in_time, color=RED)
+
+  # plot referense distr
+  sns.histplot(ref, color=GREY, ax=ax2)
+  # plot current distr
+  sns.histplot(curr, color=RED, ax=ax3)
+  # plot two distr
+  sns.histplot(ref, color=GREY, ax=ax4)
+  sns.histplot(curr, color=RED, ax=ax4)
+  plt.show()
+
 
 import pandas as pd
 from evidently.metrics import ColumnDriftMetric
@@ -741,6 +780,7 @@ def run_pipeline(config):
     print(data_with_prediction_shifted_close[target_col])
     drift_report=evaluare_drift(data_with_prediction_shifted_close_cleaned[target_col], current_data_predict_shifted_close_cleaned[target_col])
     print(drift_report)
+    plot_example(data_with_prediction_shifted_close_cleaned[target_col], current_data_predict_shifted_close_cleaned[target_col])
 
 
 # Main function to run everything
