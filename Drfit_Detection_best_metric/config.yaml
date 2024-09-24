@@ -1,0 +1,66 @@
+data_ingestion:
+  source: "EURUSD"   # The currency pair (or source name)
+  start_date: "2023-01-01"
+  end_date: "2023-12-31"
+  api_url: "https://eodhd.com/api/intraday/EURUSD.FOREX"
+  api_token: "658e841fa1a6f9.30546411"
+
+preprocessing:
+  nan_handling: "ffill"  # Options: 'ffill' for forward fill, 'bfill' for backward fill
+  datetime_column: "datetime"  # The name of the datetime column
+  required_columns: ['open', 'high', 'low', 'close']  # List of essential columns
+
+feature_engineering:
+  moving_average_window: 3  # The window size for the moving average
+  target_column: "close"    # The column on which the moving average is applied
+
+model:
+  type: 'ElasticNet'  # or 'RandomForest'
+  param_grid:
+    alpha: [0.1, 1.0, 10.0]
+    l1_ratio: [0.1, 0.5, 0.9]
+  name: 'elastic_net_model'  # Name to save the model
+
+# Alternatively for RandomForest:
+# model:
+#   type: "RandomForest"
+#   param_grid:
+#     n_estimators: [100, 200, 300]
+#     max_depth: [5, 10, 15]
+
+evaluation:
+  metrics: 
+    - mse
+    - r2
+    - mae
+
+
+validation:
+  features:
+    - 'open'
+    - 'high'
+    - 'low'
+    - 'close'
+    - 'MA3'
+  split_ratio: 0.2
+
+
+deployment:
+  save_model: false     # Whether to save the model for future use
+
+prediction:
+  required_columns:
+    - "open"
+    - "high"
+    - "low"
+    - "close"
+    - "MA3"
+
+
+post_processing:
+  tolerance: 0.001  # Specify your tolerance value here
+
+
+drift_detection:
+  enabled: true
+  drift_threshold: 0.01  # Threshold for drift detection (e.g., 0.01)
